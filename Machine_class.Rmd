@@ -1,0 +1,159 @@
+---
+title: "Machine Learning Assignment - Benoît GILBERT"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(error=FALSE, warning=FALSE, message=FALSE)
+```
+
+This is my work for the machine learning class. 
+
+In the provided dataset, six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Sensors recorded various parameters during these exercises. Our goal is to predict the "classe" variable, based on what the sensors have measured.
+
+# Loading data
+
+```{r, echo=T, results='hide'}
+library(data.table); library(caret) # loading packages
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path)) # setting working directory
+DATA <- setDT(read.csv(file = "pml-training.csv")[-1])
+```
+
+# Tidying data
+
+This set contain several columns that are useless, because not directly obtained from sensors or not actual raw data. Let's remove them :
+
+```{r}
+DATA <- DATA[ , c(grep("time", names(DATA), value = T)) := NULL ] # removing the timestanps
+DATA <- DATA[, c(grep("user_name|window", names(DATA), value = T)) := NULL] # removing subject name and acquisition numbers
+DATA <- DATA[ , c(grep("max|min|swewness|stddev|avg|var|skew|kurtosis|amplitude", names(DATA), value = T)) := NULL ] # removing the covariates (I only want to keep the raw measurement from the sensors)
+DATA$classe <- as.factor(DATA$classe) # coercing as factor
+```
+
+Checking there are not other useless variables.
+
+```{r}
+nearZeroVar(DATA, names = TRUE)  
+```
+
+Ok !
+
+Let's now use this DATA to create a training and testing set (because the provided TEST set, for the Quizz, is very small)
+
+```{r}
+set.seed(13)
+training_index <- createDataPartition(y = DATA$classe, p = 0.7, list = FALSE)
+training <- DATA[training_index,]
+testing <- DATA[-training_index,]
+```
+
+
+# Training models
+
+Given the high number of observations, the high number of variables, and the fact that my outcome contains several categories, I expect that an approach based on trees would solve the problem. 
+
+I will train using the two most common tools :  
+  * a random forest model,   
+  * and a Stochastic Gradient Boosting (GBM) (which also uses trees).   
+
+For each model, I will try with and without pre-possessing using Principal Coordinate Analysis (PCA).  
+
+```{r, echo=T}
+model1 <- train(classe ~. , method = "rf", data = training, trControl = trainControl(method = "cv", number = 2))
+model1b <- train(classe ~. , preProcess = "pca", method = "rf", data = training, trControl = trainControl(method = "cv", number = 2))
+
+model2 <- train(classe ~. ,  method = "gbm", data = training, trControl = trainControl(method = "repeatedcv", number = 2, repeats = 1), verbose = F)
+model2b <- train(classe ~. , preProcess = "pca", method = "gbm", data = training, trControl = trainControl(method = "repeatedcv", number = 2, repeats = 1), verbose = F)
+```
+
+# Testing models
+
+Let's now evaluate accuracy of each model in the testing set
+
+```{r}
+# For model 1
+test_m1 <- predict(model1, testing)
+matrix_m1 <- confusionMatrix(test_m1, testing$classe)
+
+# For model 1b
+test_m1b <- predict(model1b, testing)
+matrix_m1b <- confusionMatrix(test_m1b, testing$classe)
+
+# For model 2
+test_m2 <- predict(model2, testing)
+matrix_m2 <- confusionMatrix(test_m2, testing$classe)
+
+# For model 2b
+test_m2b <- predict(model2b, testing)
+matrix_m2b <- confusionMatrix(test_m2b, testing$classe)
+```
+
+Extracting accuracy of each model :
+
+```{r}
+data.frame(RF = matrix_m1$overall[[1]], RF_PCA = matrix_m1b$overall[[1]], GBM = matrix_m2$overall[[1]], GBM_PCA = matrix_m2b$overall[[1]])
+```
+
+We see that pre-processing with PCA actually makes all models worse. 
+
+Model 1 (random forest) looks marginally better (99% accuracy). However Model2 (GBM) looks also fine (96% accuracy). 
+
+So here are the two models that I retain. We can print their summary: 
+
+```{r, echo= F}
+print(model1)
+print(model2)
+```
+
+We can even have a look on the two most influential variables in model2 : 
+
+```{r, echo=FALSE, results='hide', fig.show="hide"}
+tempo <- summary(model2)
+```
+```{r, echo=F}
+head(tempo[2],2)
+```
+
+Let's see how they discriminate the classe, in our testing set : 
+
+```{r}
+qplot(roll_belt , pitch_forearm, data = training, col = classe)
+```
+
+
+# Final testing (Quizz test set)
+
+I'll finally test the two models on the provided little TEST set, for the Quizz
+
+```{r}
+TEST <- setDT(read.csv(file = "pml-testing.csv")[-1]) # loading TEST data
+# For model 1
+TEST_m1 <- predict(model1, TEST)
+# For model 1
+TEST_m2 <- predict(model2, TEST)
+# Checking congruence 
+confusionMatrix(TEST_m1, TEST_m2)[2:3] 
+```
+
+Both models agree on the prediction, with 100% accuracy ! Thus my answer to the Quizz will be : 
+
+```{r, echo=F}
+data.frame(Answer = TEST_m1, Question_id = TEST$problem_id)
+```
+
+
+# Out of Sample Error
+
+Apparently, there is no need for separate test set or cross-validation when "Random Forest" or "Generalized Boosting Model" are used, because the procedure already splits the data between training and testing sets, and thus minimizes the risk of bias. 
+
+
+
+
+
+
+
+
+
